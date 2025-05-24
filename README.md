@@ -1,15 +1,9 @@
 # basic-auth
 
-To install dependencies:
+Cài đặt các dependencies cần thiết:
+bun add elysia, bcryptjs, @types/pg, @types/nodemailer, jsonwebtoken, dotenv
 
-```bash
-bun install
-```
+Khởi chạy:
+bun run src/index.ts
 
-To run:
 
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.2.13. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

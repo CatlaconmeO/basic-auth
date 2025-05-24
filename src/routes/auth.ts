@@ -56,7 +56,9 @@ export const auth = new Elysia({ prefix: '/auth' })
                 return { message: 'Đăng ký thành công, hãy kiểm tra email để xác thực tài khoản' };
             } catch (error) {
                 set.status = 500;
-                return { message: 'Gửi email thất bại', error };
+                //Xoá user sau khi gửi mail thất bại
+                pool.query('DELETE users WHERE email = $1', [email]);
+                return { message: 'Gửi email thất bại, hãy thực hiện đăng ký lại tài khoản', error };
             }
 
         },
@@ -64,7 +66,7 @@ export const auth = new Elysia({ prefix: '/auth' })
         {
             body: t.Object({
                 name: t.String({
-                    minLength: 8,
+                    minLength: 6,
                     maxLength: 50,
                     error: 'Tên không hợp lệ'
                 }),
@@ -75,7 +77,8 @@ export const auth = new Elysia({ prefix: '/auth' })
                 ),
                 password: t.String({
                     minLength: 6,
-                    error: 'Mật khẩu phải chứa ít nhất 6 ký tự'
+                    maxLength: 50,
+                    error: 'Mật khẩu không hợp lệ'
                 }
                 )
             }),
@@ -83,13 +86,21 @@ export const auth = new Elysia({ prefix: '/auth' })
     )
 
 
-    .get('/verify', async ({ query }) => {
+    .get('/verify', async ({ query, set }) => {
         const { token } = query;
 
         const user = await pool.query('SELECT * FROM users WHERE verification_token = $1', [token]);
 
-        await pool.query('UPDATE users SET is_verified = true WHERE verification_token = $1', [token]);
+        if (user.rows.length == 0) {
+            set.status = 400;
+            return { message: 'Token không hợp lệ' }
+        }
 
+        if (user.rows[0].length > 0) {
+            await pool.query('UPDATE users SET is_verified = true WHERE verification_token = $1', [token]);
+        }
+       
+        set.status = 200;
         return { message: 'Xác thực thành công' }
     }
 
@@ -144,16 +155,8 @@ export const auth = new Elysia({ prefix: '/auth' })
         },
         {
             body: t.Object({
-                email: t.String({
-                    format: 'email',
-                    error: 'Email không hợp lệ'
-                }
-                ),
-                password: t.String({
-                    minLength: 6,
-                    error: 'Mật khẩu phải chứa ít nhất 6 ký tự'
-                }
-                )
+                email: t.String(),
+                password: t.String()
             }),
         }
     )
