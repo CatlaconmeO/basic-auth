@@ -3,25 +3,26 @@ import bcryptjs from 'bcryptjs';
 import { pool } from '../db/db.js';
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
+import { sendMails } from '../utils/sendMail.ts';
 import { config } from 'dotenv';
 config()
 
 export const auth = new Elysia({ prefix: '/auth' })
     .post('/register',
-        async ({ body, set }) => { //Context cần dùng
+        async ({ body, set }) => {
             const { name, email, password } = body;
 
             // Kiểm tra xem email đã tồn tại trong DB chưa
             const existing = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
             if (existing.rows.length > 0) {
                 set.status = 400;
-                return { message: 'Email đã tồn tại' };
+                return { status: 400, message: 'Email đã tồn tại' };
             }
 
             const hashedPassword = await bcryptjs.hash(password, 10);
 
             //Tạo token xác thực
-            const verifyToken = jwt.sign({ name }, process.env.JWT_SECRET as string, { expiresIn: '10s' });
+            const verifyToken = jwt.sign({ name }, process.env.JWT_SECRET as string, { expiresIn: '10m' });
 
             //Lưu thông tin user vào DB
             const saveUser = await pool.query(
@@ -33,36 +34,8 @@ export const auth = new Elysia({ prefix: '/auth' })
             const verifyLink = `http://localhost:3000/auth/verify?token=${verifyToken}`;
 
             // Gửi email xác thực
-            const transporter = nodemailer.createTransport({
-                service: 'gmail',
-                auth: {
-                    user: process.env.GMAIL_USER,
-                    pass: process.env.GMAIL_PASS,
-                },
-            });
-
-            // Nội email
-            const mailOptions = {
-                from: process.env.GMAIL_USER,
-                to: email,
-                subject: 'Xác thực tài khoản',
-                text: 'Vui lòng nhấp vào liên kết sau để xác thực tài khoản của bạn: ' + verifyLink,
-            };
-
-            //Gửi email
-            try {
-                await transporter.sendMail(mailOptions);
-                set.status = 200;
-                return { message: 'Đăng ký thành công, hãy kiểm tra email để xác thực tài khoản' };
-            } catch (error) {
-                set.status = 500;
-                //Xoá user sau khi gửi mail thất bại
-                pool.query('DELETE users WHERE email = $1', [email]);
-                return { message: 'Gửi email thất bại, hãy thực hiện đăng ký lại tài khoản', error };
-            }
-
+            return await sendMails(email, verifyLink);
         },
-
         {
             body: t.Object({
                 name: t.String({
@@ -73,14 +46,12 @@ export const auth = new Elysia({ prefix: '/auth' })
                 email: t.String({
                     format: 'email',
                     error: 'Email không hợp lệ'
-                }
-                ),
+                }),
                 password: t.String({
                     minLength: 6,
                     maxLength: 50,
                     error: 'Mật khẩu không hợp lệ'
-                }
-                )
+                })
             }),
         }
     )
@@ -88,23 +59,16 @@ export const auth = new Elysia({ prefix: '/auth' })
 
     .get('/verify', async ({ query, set }) => {
         const { token } = query;
-
         const user = await pool.query('SELECT * FROM users WHERE verification_token = $1', [token]);
-
         if (user.rows.length == 0) {
             set.status = 400;
-            return { message: 'Token không hợp lệ' }
+            return { status: 400, message: 'Token không hợp lệ' }
         }
-
-        if (user.rows[0].length > 0) {
-            await pool.query('UPDATE users SET is_verified = true WHERE verification_token = $1', [token]);
-        }
-       
+        // Đã có user, tiến hành xác thực
+        await pool.query('UPDATE users SET is_verified = true WHERE verification_token = $1', [token]);
         set.status = 200;
-        return { message: 'Xác thực thành công' }
-    }
-
-    )
+        return { status: 200, message: 'Xác thực thành công' }
+    })
 
     .post('/login',
         async ({ body, set }) => {
@@ -190,8 +154,65 @@ export const auth = new Elysia({ prefix: '/auth' })
         }
     )
 
-    // Route kiểm tra access token
+    // Route cấp lại access token
     .get('/me', async ({ request, set }) => {
 
     })
+
+    .post('/forgot-password',
+        async ({ body, set }) => {
+            const { email } = body;
+            const user = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+            if (user.rows.length == 0) {
+                set.status = 400;
+                return { status: 400, message: 'Email không tồn tại' };
+            }
+            const verifyToken = jwt.sign({ email }, process.env.JWT_SECRET as string, { expiresIn: '10m' });
+            const verifyLink = `http://localhost:3000/auth/reset-password?token=${verifyToken}`;
+            // Gửi email đặt lại mật khẩu
+            set.status = 200;
+            return await sendMails(email, verifyLink);
+        },
+        {
+            body: t.Object({
+                email: t.String({
+                    format: 'email',
+                    error: 'Email không hợp lệ'
+                })
+            })
+        }
+    )
+
+    .post('/reset-password',
+        async ({ body, set }) => {
+            const { token, newPassword } = body;
+            // Kiểm tra token
+            let decoded;
+            try {
+                decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { email?: string };
+            } catch (err) {
+                set.status = 400;
+                return { status: 400, message: 'Token không hợp lệ hoặc đã hết hạn' };
+            }
+            if (!decoded || !decoded.email) {
+                set.status = 400;
+                return { status: 400, message: 'Token không hợp lệ' };
+            }
+            const hashedPassword = await bcryptjs.hash(newPassword, 10);
+            // Cập nhật mật khẩu mới
+            await pool.query('UPDATE users SET password = $1 WHERE email = $2', [hashedPassword, decoded.email]);
+            set.status = 200;
+            return { status: 200, message: 'Đặt lại mật khẩu thành công' };
+        },
+        {
+            body: t.Object({
+                token: t.String(),
+                newPassword: t.String({
+                    minLength: 6,
+                    maxLength: 50,
+                    error: 'Mật khẩu mới không hợp lệ'
+                })
+            })
+        }
+    )
 
