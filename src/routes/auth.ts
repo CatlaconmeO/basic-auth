@@ -4,6 +4,8 @@ import { pool } from '../db/db.js';
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
 import { sendMails } from '../utils/sendMail.ts';
+import axios from 'axios';
+import qs from 'qs';
 import { config } from 'dotenv';
 config()
 
@@ -154,11 +156,6 @@ export const auth = new Elysia({ prefix: '/auth' })
         }
     )
 
-    // Route cấp lại access token
-    .get('/me', async ({ request, set }) => {
-
-    })
-
     .post('/forgot-password',
         async ({ body, set }) => {
             const { email } = body;
@@ -167,7 +164,11 @@ export const auth = new Elysia({ prefix: '/auth' })
                 set.status = 400;
                 return { status: 400, message: 'Email không tồn tại' };
             }
+
+            // Tạo và lưu token
             const verifyToken = jwt.sign({ email }, process.env.JWT_SECRET as string, { expiresIn: '10m' });
+            await pool.query('UPDATE users SET verification_token = $1 WHERE email = $2', [verifyToken, email]);
+
             const verifyLink = `http://localhost:3000/auth/reset-password?token=${verifyToken}`;
             // Gửi email đặt lại mật khẩu
             set.status = 200;
@@ -215,4 +216,76 @@ export const auth = new Elysia({ prefix: '/auth' })
             })
         }
     )
+
+    // Thiết lập phía Client và Redirect URI từ Google
+    .get('/google', () => {
+        const query = qs.stringify({
+            client_id: process.env.CLIENT_ID,
+            redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+            response_type: 'code',
+            scope: 'openid profile email',
+            access_type: 'offline',
+            prompt: 'consent'
+        });
+        return new Response(null, {
+            status: 302,
+            headers: {
+                Location: `https://accounts.google.com/o/oauth2/auth?${query}`
+            }
+        });
+    })
+
+    .get('/google/callback', async ({ query, set }) => {
+        const { code } = query;
+
+        // Lấy access token từ Google
+        const tokenRes = await axios.post('https://oauth2.googleapis.com/token', {
+            code,
+            client_id: process.env.CLIENT_ID,
+            client_secret: process.env.CLIENT_SECRET,
+            redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+            grant_type: 'authorization_code'
+        })
+
+        const { access_token } = tokenRes.data;
+        // Lấy thông tin người dùng từ Google
+        const userRes = await axios.get('https://www.googleapis.com/oauth2/v1/userinfo', {
+            headers: {
+                Authorization: `Bearer ${access_token}`,
+            },
+        })
+
+        const { email, name } = userRes.data;
+
+        const existing = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        let user;
+        if (existing.rows.length == 0) {
+            const insert = await pool.query(
+                'INSERT INTO users (email, name, provider, is_verified) VALUES ($1, $2, $3, $4) RETURNING *',
+                [email, name, 'google', true]
+            );
+            user = insert.rows[0];
+        } else {
+            user = existing.rows[0];
+        }
+
+        // Tạo và lưu access token và refresh token
+        const accessToken = jwt.sign({ id: user.id }, process.env.ACCESS_SECRET as string, { expiresIn: '15m' });
+        const refreshToken = jwt.sign({ id: user.id }, process.env.ACCESS_SECRET as string, { expiresIn: '7d' });
+
+        await pool.query(
+            'INSERT INTO refresh_tokens (user_id, token) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET token = EXCLUDED.token RETURNING *',
+            [user.id, refreshToken]
+        );
+
+        return {
+            status: 200,
+            message: 'Đăng nhập bằng Google thành công',
+            user,
+            accessToken,
+            refreshToken
+        }
+
+    })
+
 

@@ -28,5 +28,4 @@ export const sendMails = async (email: string, verifyLink: string) => {
         // await pool.query('DELETE FROM users WHERE email = $1', [email]);
         return { status: 500, message: 'Gửi email thất bại' };
     }
-
 }
