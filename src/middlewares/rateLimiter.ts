@@ -9,10 +9,6 @@ export const rateLimiter = async (context: any) => {
     || context.request.ip 
     || 'unknown';
 
-    if (ip == 'unknown') {
-        return { status: 400, message: 'Not Found' };
-    }
-
     // Cài đặt khoá trong Redis cho từng IP
     const key = `rate_limit:${ip}`;
 
