@@ -4,10 +4,10 @@ const WINDOW_SIZE_IN_SECONDS = 60; // 1 phút
 const MAX_REQUESTS = 5;
 
 export const rateLimiter = async (context: any) => {
-    const ip = context.request.headers['x-forwarded-for'] 
-    || context.request.headers['x-real-ip'] 
-    || context.request.ip 
-    || 'unknown';
+    const ip = context.request.headers['x-forwarded-for']
+        || context.request.headers['x-real-ip']
+        || context.request.ip
+        || 'unknown';
 
     // Cài đặt khoá trong Redis cho từng IP
     const key = `rate_limit:${ip}`;
@@ -24,6 +24,6 @@ export const rateLimiter = async (context: any) => {
     } else if (parseInt(reqCount) < MAX_REQUESTS) {
         await redisClient.incr(key);
     } else {
-        return new Response('Too many requests, please try again later.', { status: 429 });
+        return { status: 429, message: 'Quá nhiều yêu cầu, vui lòng thử lại sau' };
     }
 };
