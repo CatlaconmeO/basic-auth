@@ -16,7 +16,7 @@ export const sendMails = async (email: string, verifyLink: string) => {
         from: process.env.GMAIL_USER,
         to: email,
         subject: 'Xác thực tài khoản',
-        text: 'Vui lòng nhấp vào liên kết sau để xác thực tài khoản của bạn: ' + verifyLink,
+        text: 'Vui lòng nhấp vào liên kết sau: ' + verifyLink,
     };
 
     //Gửi email
