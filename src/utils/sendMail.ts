@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import { pool } from '../db/db';
 
 export const sendMails = async (email: string, verifyLink: string) => {
     // Gửi email xác thực
