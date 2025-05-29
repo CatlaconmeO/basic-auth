@@ -1,7 +1,7 @@
 import { redisClient } from '../utils/redisClient';
 
 const WINDOW_SIZE_IN_SECONDS = 60; // 1 phút
-const MAX_REQUESTS = 5;
+const MAX_REQUESTS = 50;
 
 export const rateLimiter = async (context: any) => {
     const ip = context.request.headers['x-forwarded-for']

@@ -18,7 +18,7 @@ export const auth = new Elysia({ prefix: '/auth' })
             const existing = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
             if (existing.rows.length > 0) {
                 set.status = 400;
-                return { status: 400, message: 'Email đã tồn tại' };
+                return { status: 400, message: 'Email đã tồn tại', user: { id: null, name: '', email: '' } };
             }
 
             const hashedPassword = await bcryptjs.hash(password, 10);
@@ -36,7 +36,17 @@ export const auth = new Elysia({ prefix: '/auth' })
             const verifyLink = `http://localhost:3000/auth/verify?token=${verifyToken}`;
 
             // Gửi email xác thực
-            return await sendMails(email, verifyLink);
+            await sendMails(email, verifyLink);
+            set.status = 200;
+            return {
+                status: 200,
+                message: 'Hãy kiểm tra email để xác thực tài khoản, link xác thực sẽ có hiệu lực trong 10 phút',
+                user: {
+                    id: saveUser.rows[0].id,
+                    name: saveUser.rows[0].name,
+                    email: saveUser.rows[0].email
+                }
+            };
         },
         {
             body: t.Object({
@@ -55,6 +65,15 @@ export const auth = new Elysia({ prefix: '/auth' })
                     error: 'Mật khẩu không hợp lệ'
                 })
             }),
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                user: t.Object({
+                    id: t.Any(),
+                    name: t.String(),
+                    email: t.String()
+                })
+            })
         }
     )
 
@@ -64,13 +83,36 @@ export const auth = new Elysia({ prefix: '/auth' })
         const user = await pool.query('SELECT * FROM users WHERE verification_token = $1', [token]);
         if (user.rows.length == 0) {
             set.status = 400;
-            return { status: 400, message: 'Token không hợp lệ' }
+            return {
+                status: 400,
+                message: 'Token không hợp lệ',
+                user: { id: null, name: '', email: '' }
+            };
         }
         // Đã có user, tiến hành xác thực
         await pool.query('UPDATE users SET is_verified = true WHERE verification_token = $1', [token]);
         set.status = 200;
-        return { status: 200, message: 'Xác thực thành công' }
-    })
+        return {
+            status: 200,
+            message: 'Xác thực thành công',
+            user: {
+                id: user.rows[0].id,
+                name: user.rows[0].name,
+                email: user.rows[0].email
+            }
+        };
+    },
+        {
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                user: t.Object({
+                    id: t.Any(),
+                    name: t.String(),
+                    email: t.String()
+                })
+            })
+        })
 
     .post('/login',
         async ({ body, set }) => {
@@ -80,7 +122,16 @@ export const auth = new Elysia({ prefix: '/auth' })
             const existing = await pool.query('SELECT * FROM users WHERE email = $1', [email])
             if (existing.rows.length == 0) {
                 set.status = 400;
-                return { message: 'Email không tồn tại' }
+                return {
+                    status: 400,
+                    message: 'Email không tồn tại',
+                    user: {
+                        id: '',
+                        name: ''
+                    },
+                    accessToken: '',
+                    refreshToken: ''
+                }
             }
 
             // Kiểm tra password
@@ -88,14 +139,33 @@ export const auth = new Elysia({ prefix: '/auth' })
             const isMatch = await bcryptjs.compare(password, user.password);
             if (!isMatch) {
                 set.status = 400;
-                return { message: 'Mật khẩu không đúng' }
+                return {
+                    status: 400,
+                    message: 'Mật khẩu không chính xác',
+                    user: {
+                        id: '',
+                        name: ''
+                    },
+                    accessToken: '',
+                    refreshToken: ''
+                }
             }
 
             // Kiểm tra tài khoản đã được xác thực chưa
             const isVerified = user.is_verified;
             if (!isVerified) {
                 set.status = 400;
-                return { message: 'Tài khoản chưa được xác thực' }
+                return {
+                    status: 400,
+                    message: 'Tài khoản chưa được xác thực',
+                    user: {
+                        id: '',
+                        name: ''
+                    },
+                    accessToken: '',
+                    refreshToken: ''
+                }
+
             }
 
             // Tạo access token và refresh token
@@ -110,6 +180,7 @@ export const auth = new Elysia({ prefix: '/auth' })
 
             set.status = 200;
             return {
+                status: 200,
                 message: 'Đăng nhập thành công',
                 user: {
                     id: user.id,
@@ -124,27 +195,46 @@ export const auth = new Elysia({ prefix: '/auth' })
                 email: t.String(),
                 password: t.String()
             }),
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                user: t.Object({
+                    id: t.Any(),
+                    name: t.String()
+                }),
+                accessToken: t.String(),
+                refreshToken: t.String()
+            })
         }
+
     )
 
     .post('/refresh-token',
         async ({ body, set }) => {
             const { refreshToken } = body;
 
-            // Kiểm tra xem refresh token có hợp lệ không
             const user = await pool.query('SELECT * FROM refresh_tokens WHERE token = $1', [refreshToken]);
+
             if (user.rows.length == 0) {
                 set.status = 400;
-                return { message: 'Refresh token không hợp lệ' }
+                return {
+                    status: 400,
+                    message: 'Refresh token không hợp lệ',
+                    accessToken: ''
+                }
             }
             const userId = user.rows[0].id;
 
             // Tạo access token mới
             const accessToken = jwt.sign({ id: userId }, process.env.JWT_SECRET as string, { expiresIn: '15m' });
 
+            // Kiểm tra xem refresh token có hợp lệ không
+
+
             // Trả về access token mới
             set.status = 200;
             return {
+                status: 200,
                 message: 'Cấp lại access token thành công',
                 accessToken
             }
@@ -152,7 +242,13 @@ export const auth = new Elysia({ prefix: '/auth' })
         {
             body: t.Object({
                 refreshToken: t.String()
+            }),
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                accessToken: t.String()
             })
+
         }
     )
 
@@ -162,7 +258,13 @@ export const auth = new Elysia({ prefix: '/auth' })
             const user = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
             if (user.rows.length == 0) {
                 set.status = 400;
-                return { status: 400, message: 'Email không tồn tại' };
+                return {
+                    status: 400,
+                    message: 'Email không tồn tại trong hệ thống',
+                    user: {
+                        email: email
+                    }
+                };
             }
 
             // Tạo và lưu token
@@ -171,8 +273,15 @@ export const auth = new Elysia({ prefix: '/auth' })
 
             const verifyLink = `http://localhost:3000/auth/reset-password?token=${verifyToken}`;
             // Gửi email đặt lại mật khẩu
+            await sendMails(email, verifyLink);
             set.status = 200;
-            return await sendMails(email, verifyLink);
+            return {
+                status: 200,
+                message: 'Hãy kiểm tra gmail của bạn',
+                user: {
+                    email: email
+                }
+            }
         },
         {
             body: t.Object({
@@ -180,7 +289,16 @@ export const auth = new Elysia({ prefix: '/auth' })
                     format: 'email',
                     error: 'Email không hợp lệ'
                 })
+            }),
+
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                user: t.Object({
+                    email: t.String()
+                })
             })
+
         }
     )
 
@@ -193,17 +311,17 @@ export const auth = new Elysia({ prefix: '/auth' })
                 decoded = jwt.verify(token, process.env.JWT_SECRET as string) as { email?: string };
             } catch (err) {
                 set.status = 400;
-                return { status: 400, message: 'Token không hợp lệ hoặc đã hết hạn' };
+                return { status: 400, message: 'Token không hợp lệ hoặc đã hết hạn', newPassword: '' };
             }
             if (!decoded || !decoded.email) {
                 set.status = 400;
-                return { status: 400, message: 'Token không hợp lệ' };
+                return { status: 400, message: 'Token không hợp lệ', newPassword: '' };
             }
             const hashedPassword = await bcryptjs.hash(newPassword, 10);
             // Cập nhật mật khẩu mới
             await pool.query('UPDATE users SET password = $1 WHERE email = $2', [hashedPassword, decoded.email]);
             set.status = 200;
-            return { status: 200, message: 'Đặt lại mật khẩu thành công' };
+            return { status: 200, message: 'Đặt lại mật khẩu thành công', newPassword: hashedPassword };
         },
         {
             body: t.Object({
@@ -213,6 +331,12 @@ export const auth = new Elysia({ prefix: '/auth' })
                     maxLength: 50,
                     error: 'Mật khẩu mới không hợp lệ'
                 })
+            }),
+
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                newPassword: t.String()
             })
         }
     )
@@ -281,11 +405,22 @@ export const auth = new Elysia({ prefix: '/auth' })
         return {
             status: 200,
             message: 'Đăng nhập bằng Google thành công',
-            user,
-            accessToken,
-            refreshToken
+            user: user,
+            accessToken: accessToken,
+            refreshToken: refreshToken
         }
 
-    })
+    },
+        {
+
+            response: t.Object({
+                status: t.Number(),
+                message: t.String(),
+                user: t.String(),
+                accessToken: t.String(),
+                refreshToken: t.String()
+            })
+        }
+    )
 
 
